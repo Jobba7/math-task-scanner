@@ -1,122 +1,243 @@
+import 'dart:developer';
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
+import 'dart:ui' as ui;
 
-void main() {
-  runApp(const MyApp());
-}
+void main() => runApp(const MyApp());
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
-  // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter Demo',
-      theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
-      ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
+      title: 'OCR Auswahl Demo',
+      theme: ThemeData(primarySwatch: Colors.blue),
+      home: const CameraScreen(),
+      debugShowCheckedModeBanner: false,
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
+class CameraScreen extends StatefulWidget {
+  const CameraScreen({super.key});
 
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  State<CameraScreen> createState() => _CameraScreenState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+class _CameraScreenState extends State<CameraScreen> {
+  final ImagePicker _picker = ImagePicker();
 
-  void _incrementCounter() {
-    setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
-    });
+  Future<void> _pickImage() async {
+    final XFile? image = await _picker.pickImage(source: ImageSource.camera);
+    if (!mounted) return;
+    if (image != null) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => TextRecognitionScreen(File(image.path)),
+        ),
+      );
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
     return Scaffold(
-      appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
-      ),
+      appBar: AppBar(title: const Text('Bild aufnehmen')),
       body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
-        child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            const Text('You have pushed the button this many times:'),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
-            ),
-          ],
+        child: ElevatedButton.icon(
+          icon: const Icon(Icons.camera_alt),
+          label: const Text('Foto machen'),
+          onPressed: _pickImage,
         ),
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
-      ), // This trailing comma makes auto-formatting nicer for build methods.
+    );
+  }
+}
+
+class TextRecognitionScreen extends StatefulWidget {
+  final File imageFile;
+  const TextRecognitionScreen(this.imageFile, {super.key});
+
+  @override
+  State<TextRecognitionScreen> createState() => _TextRecognitionScreenState();
+}
+
+class _TextRecognitionScreenState extends State<TextRecognitionScreen> {
+  late final TextRecognizer _textRecognizer;
+  List<TextElement> _elements = [];
+  final Set<int> _selected = {};
+  ui.Image? _loadedImage;
+
+  @override
+  void initState() {
+    super.initState();
+    _textRecognizer = TextRecognizer(script: TextRecognitionScript.latin);
+    _loadImage();
+    _processImage();
+  }
+
+  Future<void> _loadImage() async {
+    final bytes = await widget.imageFile.readAsBytes();
+    final codec = await ui.instantiateImageCodec(bytes);
+    final frame = await codec.getNextFrame();
+    setState(() {
+      _loadedImage = frame.image;
+    });
+  }
+
+  Future<void> _processImage() async {
+    final inputImage = InputImage.fromFile(widget.imageFile);
+    final recognizedText = await _textRecognizer.processImage(inputImage);
+    if (!mounted) return;
+
+    final elements = recognizedText.blocks
+        .expand((block) => block.lines)
+        .expand((line) => line.elements)
+        .toList();
+
+    // Konsole-Log für Debugging
+    for (final elem in elements) {
+      log('Erkannt: "${elem.text}" → ${elem.boundingBox}');
+    }
+
+    setState(() {
+      _elements = elements;
+    });
+  }
+
+  @override
+  void dispose() {
+    _textRecognizer.close();
+    super.dispose();
+  }
+
+  void _toggleSelection(int index) {
+    setState(() {
+      if (_selected.contains(index)) {
+        _selected.remove(index);
+      } else {
+        _selected.add(index);
+      }
+    });
+  }
+
+  void _confirmSelection() {
+    final selectedTexts = _selected.map((i) => _elements[i].text).toList();
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => SummaryScreen(selectedTexts),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loadedImage == null) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Text auswählen')),
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          final imageWidth = _loadedImage!.width.toDouble();
+          final imageHeight = _loadedImage!.height.toDouble();
+
+          final containerWidth = constraints.maxWidth;
+          final containerHeight = constraints.maxHeight;
+
+          final imageAspect = imageWidth / imageHeight;
+          final containerAspect = containerWidth / containerHeight;
+
+          double displayWidth, displayHeight, dx = 0, dy = 0;
+
+          if (containerAspect > imageAspect) {
+            displayHeight = containerHeight;
+            displayWidth = imageAspect * displayHeight;
+            dx = (containerWidth - displayWidth) / 2;
+          } else {
+            displayWidth = containerWidth;
+            displayHeight = displayWidth / imageAspect;
+            dy = (containerHeight - displayHeight) / 2;
+          }
+
+          final scaleX = displayWidth / imageWidth;
+          final scaleY = displayHeight / imageHeight;
+
+          return Stack(
+            children: [
+              Positioned.fill(
+                child: Image.file(widget.imageFile, fit: BoxFit.contain),
+              ),
+              ..._elements.asMap().entries.map((entry) {
+                final idx = entry.key;
+                final elem = entry.value;
+                final rect = elem.boundingBox;
+
+                return Positioned(
+                  left: rect.left * scaleX + dx,
+                  top: rect.top * scaleY + dy,
+                  width: rect.width * scaleX,
+                  height: rect.height * scaleY,
+                  child: GestureDetector(
+                    onTap: () => _toggleSelection(idx),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.transparent,
+                        border: Border.all(
+                          color: _selected.contains(idx)
+                              ? Colors.green
+                              : Colors.red,
+                          width: 2,
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              }),
+            ],
+          );
+        },
+      ),
+      bottomNavigationBar: Padding(
+        padding: const EdgeInsets.all(8.0),
+        child: ElevatedButton(
+          onPressed: _selected.isNotEmpty ? _confirmSelection : null,
+          child: Text('Bestätigen (${_selected.length})'),
+        ),
+      ),
+    );
+  }
+}
+
+class SummaryScreen extends StatelessWidget {
+  final List<String> selectedTexts;
+  const SummaryScreen(this.selectedTexts, {super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Übersicht')),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: ListView.builder(
+          itemCount: selectedTexts.length,
+          itemBuilder: (context, index) => Card(
+            child: Padding(
+              padding: const EdgeInsets.all(12.0),
+              child: Text(selectedTexts[index], style: const TextStyle(fontSize: 16)),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
