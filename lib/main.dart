@@ -4,6 +4,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:provider/provider.dart';
 import 'dart:ui' as ui;
+import 'dart:developer' as developer;
 
 void main() => runApp(const OcrSelectionApp());
 
@@ -55,7 +56,7 @@ class CameraScreen extends StatelessWidget {
 class TextRecognitionProvider extends ChangeNotifier {
   final File imageFile;
   final TextRecognizer _textRecognizer;
-  List<TextElement> textElements = [];
+  List<TextLine> textElements = [];
   final Set<int> selectedIndices = {};
   ui.Image? loadedImage;
 
@@ -81,12 +82,56 @@ class TextRecognitionProvider extends ChangeNotifier {
     final inputImage = InputImage.fromFile(imageFile);
     final recognizedText = await _textRecognizer.processImage(inputImage);
     
-    textElements = recognizedText.blocks
+    final blocks = recognizedText.blocks;
+    _logDetectedBlocks(blocks.where((block) => block.lines.length > 1).toList());
+    textElements = blocks
         .expand((block) => block.lines)
-        .expand((line) => line.elements)
         .toList();
 
     notifyListeners();
+  }
+
+  void _logDetectedBlocks(List<TextBlock> blocks) {
+    developer.log(
+      '▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄',
+      name: 'OCR_DEBUG',
+    );
+
+    for (final block in blocks) {
+      developer.log(
+        '▌ Block erkannt:',
+        name: 'OCR_DEBUG',
+      );
+      developer.log("$block",
+        name: 'OCR_DEBUG',
+      );
+      developer.log(
+        '▌   Text: "${block.text}"',
+        name: 'OCR_DEBUG',
+      );
+      for (final line in block.lines) {
+        developer.log(
+          '▌   Line: "${line.text}"',
+          name: 'OCR_DEBUG',
+        );
+        developer.log(
+          '▌   Confidence: ${line.confidence?.toStringAsFixed(2)}',
+          name: 'OCR_DEBUG',
+        );
+        developer.log("Bounding Box: ${line.boundingBox}",
+          name: 'OCR_DEBUG',
+        );
+      }
+      
+      developer.log(
+        '▌   Bounding Box: ${block.boundingBox}',
+        name: 'OCR_DEBUG',
+      );
+      developer.log(
+        '▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌',
+        name: 'OCR_DEBUG',
+      );
+    }
   }
 
   void toggleSelection(int index) {
