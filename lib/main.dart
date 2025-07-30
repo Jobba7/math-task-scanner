@@ -1,14 +1,14 @@
-import 'dart:developer';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
+import 'package:provider/provider.dart';
 import 'dart:ui' as ui;
 
-void main() => runApp(const MyApp());
+void main() => runApp(const OcrSelectionApp());
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+class OcrSelectionApp extends StatelessWidget {
+  const OcrSelectionApp({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -21,27 +21,20 @@ class MyApp extends StatelessWidget {
   }
 }
 
-class CameraScreen extends StatefulWidget {
+class CameraScreen extends StatelessWidget {
   const CameraScreen({super.key});
 
-  @override
-  State<CameraScreen> createState() => _CameraScreenState();
-}
+  Future<void> _pickImage(BuildContext context) async {
+    final imagePicker = ImagePicker();
+    final imageFile = await imagePicker.pickImage(source: ImageSource.camera);
+    if (imageFile == null) return;
+    if (!context.mounted) return;
 
-class _CameraScreenState extends State<CameraScreen> {
-  final ImagePicker _picker = ImagePicker();
-
-  Future<void> _pickImage() async {
-    final XFile? image = await _picker.pickImage(source: ImageSource.camera);
-    if (!mounted) return;
-    if (image != null) {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => TextRecognitionScreen(File(image.path)),
-        ),
-      );
-    }
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => TextRecognitionScreen(imageFile: File(imageFile.path)),
+    ));
   }
 
   @override
@@ -52,62 +45,61 @@ class _CameraScreenState extends State<CameraScreen> {
         child: ElevatedButton.icon(
           icon: const Icon(Icons.camera_alt),
           label: const Text('Foto machen'),
-          onPressed: _pickImage,
+          onPressed: () => _pickImage(context),
         ),
       ),
     );
   }
 }
 
-class TextRecognitionScreen extends StatefulWidget {
+class TextRecognitionProvider extends ChangeNotifier {
   final File imageFile;
-  const TextRecognitionScreen(this.imageFile, {super.key});
+  final TextRecognizer _textRecognizer;
+  List<TextElement> textElements = [];
+  final Set<int> selectedIndices = {};
+  ui.Image? loadedImage;
 
-  @override
-  State<TextRecognitionScreen> createState() => _TextRecognitionScreenState();
-}
+  TextRecognitionProvider({required this.imageFile})
+      : _textRecognizer = TextRecognizer(script: TextRecognitionScript.latin) {
+    _initialize();
+  }
 
-class _TextRecognitionScreenState extends State<TextRecognitionScreen> {
-  late final TextRecognizer _textRecognizer;
-  List<TextElement> _elements = [];
-  final Set<int> _selected = {};
-  ui.Image? _loadedImage;
-
-  @override
-  void initState() {
-    super.initState();
-    _textRecognizer = TextRecognizer(script: TextRecognitionScript.latin);
-    _loadImage();
-    _processImage();
+  Future<void> _initialize() async {
+    await _loadImage();
+    await _processImage();
   }
 
   Future<void> _loadImage() async {
-    final bytes = await widget.imageFile.readAsBytes();
+    final bytes = await imageFile.readAsBytes();
     final codec = await ui.instantiateImageCodec(bytes);
     final frame = await codec.getNextFrame();
-    setState(() {
-      _loadedImage = frame.image;
-    });
+    loadedImage = frame.image;
+    notifyListeners();
   }
 
   Future<void> _processImage() async {
-    final inputImage = InputImage.fromFile(widget.imageFile);
+    final inputImage = InputImage.fromFile(imageFile);
     final recognizedText = await _textRecognizer.processImage(inputImage);
-    if (!mounted) return;
-
-    final elements = recognizedText.blocks
+    
+    textElements = recognizedText.blocks
         .expand((block) => block.lines)
         .expand((line) => line.elements)
         .toList();
 
-    // Konsole-Log für Debugging
-    for (final elem in elements) {
-      log('Erkannt: "${elem.text}" → ${elem.boundingBox}');
-    }
+    notifyListeners();
+  }
 
-    setState(() {
-      _elements = elements;
-    });
+  void toggleSelection(int index) {
+    if (selectedIndices.contains(index)) {
+      selectedIndices.remove(index);
+    } else {
+      selectedIndices.add(index);
+    }
+    notifyListeners();
+  }
+
+  List<String> getSelectedTexts() {
+    return selectedIndices.map((index) => textElements[index].text).toList();
   }
 
   @override
@@ -115,104 +107,161 @@ class _TextRecognitionScreenState extends State<TextRecognitionScreen> {
     _textRecognizer.close();
     super.dispose();
   }
+}
 
-  void _toggleSelection(int index) {
-    setState(() {
-      if (_selected.contains(index)) {
-        _selected.remove(index);
-      } else {
-        _selected.add(index);
-      }
-    });
+class TextRecognitionScreen extends StatelessWidget {
+  final File imageFile;
+
+  const TextRecognitionScreen({super.key, required this.imageFile});
+
+  @override
+  Widget build(BuildContext context) {
+    return ChangeNotifierProvider(
+      create: (_) => TextRecognitionProvider(imageFile: imageFile),
+      child: const _TextRecognitionView(),
+    );
+  }
+}
+
+class _TextRecognitionView extends StatelessWidget {
+  const _TextRecognitionView();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Text auswählen')),
+      body: const _ImageOverlayWithText(),
+      bottomNavigationBar: const _ConfirmationButton(),
+    );
+  }
+}
+
+class _ImageOverlayWithText extends StatelessWidget {
+  const _ImageOverlayWithText();
+
+  @override
+  Widget build(BuildContext context) {
+    final provider = context.watch<TextRecognitionProvider>();
+    final image = provider.loadedImage;
+
+    if (image == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final displayMetrics = _calculateDisplayMetrics(
+          image: image,
+          constraints: constraints,
+        );
+
+        return Stack(
+          children: [
+            Positioned.fill(
+              child: Image.file(provider.imageFile, fit: BoxFit.contain),
+            ),
+            ..._buildTextElementsOverlay(
+              provider: provider,
+              displayMetrics: displayMetrics,
+            ),
+          ],
+        );
+      },
+    );
   }
 
-  void _confirmSelection() {
-    final selectedTexts = _selected.map((i) => _elements[i].text).toList();
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => SummaryScreen(selectedTexts),
+  DisplayMetrics _calculateDisplayMetrics({
+    required ui.Image image,
+    required BoxConstraints constraints,
+  }) {
+    final imageWidth = image.width.toDouble();
+    final imageHeight = image.height.toDouble();
+    final containerWidth = constraints.maxWidth;
+    final containerHeight = constraints.maxHeight;
+    final imageAspect = imageWidth / imageHeight;
+    final containerAspect = containerWidth / containerHeight;
+
+    double displayWidth, displayHeight, offsetX, offsetY;
+
+    if (containerAspect > imageAspect) {
+      displayHeight = containerHeight;
+      displayWidth = imageAspect * displayHeight;
+      offsetX = (containerWidth - displayWidth) / 2;
+      offsetY = 0;
+    } else {
+      displayWidth = containerWidth;
+      displayHeight = displayWidth / imageAspect;
+      offsetX = 0;
+      offsetY = (containerHeight - displayHeight) / 2;
+    }
+
+    return DisplayMetrics(
+      scaleX: displayWidth / imageWidth,
+      scaleY: displayHeight / imageHeight,
+      offsetX: offsetX,
+      offsetY: offsetY,
+    );
+  }
+
+  List<Widget> _buildTextElementsOverlay({
+    required TextRecognitionProvider provider,
+    required DisplayMetrics displayMetrics,
+  }) {
+    return provider.textElements.asMap().entries.map((entry) {
+      final index = entry.key;
+      final element = entry.value;
+      final rect = element.boundingBox;
+
+      return Positioned(
+        left: rect.left * displayMetrics.scaleX + displayMetrics.offsetX,
+        top: rect.top * displayMetrics.scaleY + displayMetrics.offsetY,
+        width: rect.width * displayMetrics.scaleX,
+        height: rect.height * displayMetrics.scaleY,
+        child: GestureDetector(
+          onTap: () => provider.toggleSelection(index),
+          child: Container(
+            decoration: BoxDecoration(
+              border: Border.all(
+                color: provider.selectedIndices.contains(index)
+                    ? Colors.green
+                    : Colors.red,
+                width: 2,
+              ),
+            ),
+          ),
+        ),
+      );
+    }).toList();
+  }
+}
+
+class _ConfirmationButton extends StatelessWidget {
+  const _ConfirmationButton();
+
+  @override
+  Widget build(BuildContext context) {
+    final provider = context.watch<TextRecognitionProvider>();
+    final selectionCount = provider.selectedIndices.length;
+
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: ElevatedButton(
+        onPressed: selectionCount > 0
+            ? () => _navigateToSummary(context, provider)
+            : null,
+        child: Text('Bestätigen ($selectionCount)'),
       ),
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    if (_loadedImage == null) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
-    }
-
-    return Scaffold(
-      appBar: AppBar(title: const Text('Text auswählen')),
-      body: LayoutBuilder(
-        builder: (context, constraints) {
-          final imageWidth = _loadedImage!.width.toDouble();
-          final imageHeight = _loadedImage!.height.toDouble();
-
-          final containerWidth = constraints.maxWidth;
-          final containerHeight = constraints.maxHeight;
-
-          final imageAspect = imageWidth / imageHeight;
-          final containerAspect = containerWidth / containerHeight;
-
-          double displayWidth, displayHeight, dx = 0, dy = 0;
-
-          if (containerAspect > imageAspect) {
-            displayHeight = containerHeight;
-            displayWidth = imageAspect * displayHeight;
-            dx = (containerWidth - displayWidth) / 2;
-          } else {
-            displayWidth = containerWidth;
-            displayHeight = displayWidth / imageAspect;
-            dy = (containerHeight - displayHeight) / 2;
-          }
-
-          final scaleX = displayWidth / imageWidth;
-          final scaleY = displayHeight / imageHeight;
-
-          return Stack(
-            children: [
-              Positioned.fill(
-                child: Image.file(widget.imageFile, fit: BoxFit.contain),
-              ),
-              ..._elements.asMap().entries.map((entry) {
-                final idx = entry.key;
-                final elem = entry.value;
-                final rect = elem.boundingBox;
-
-                return Positioned(
-                  left: rect.left * scaleX + dx,
-                  top: rect.top * scaleY + dy,
-                  width: rect.width * scaleX,
-                  height: rect.height * scaleY,
-                  child: GestureDetector(
-                    onTap: () => _toggleSelection(idx),
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: Colors.transparent,
-                        border: Border.all(
-                          color: _selected.contains(idx)
-                              ? Colors.green
-                              : Colors.red,
-                          width: 2,
-                        ),
-                      ),
-                    ),
-                  ),
-                );
-              }),
-            ],
-          );
-        },
-      ),
-      bottomNavigationBar: Padding(
-        padding: const EdgeInsets.all(8.0),
-        child: ElevatedButton(
-          onPressed: _selected.isNotEmpty ? _confirmSelection : null,
-          child: Text('Bestätigen (${_selected.length})'),
-        ),
+  void _navigateToSummary(
+    BuildContext context,
+    TextRecognitionProvider provider,
+  ) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => SummaryScreen(selectedTexts: provider.getSelectedTexts()),
       ),
     );
   }
@@ -220,24 +269,43 @@ class _TextRecognitionScreenState extends State<TextRecognitionScreen> {
 
 class SummaryScreen extends StatelessWidget {
   final List<String> selectedTexts;
-  const SummaryScreen(this.selectedTexts, {super.key});
+
+  const SummaryScreen({super.key, required this.selectedTexts});
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Übersicht')),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: ListView.builder(
-          itemCount: selectedTexts.length,
-          itemBuilder: (context, index) => Card(
-            child: Padding(
-              padding: const EdgeInsets.all(12.0),
-              child: Text(selectedTexts[index], style: const TextStyle(fontSize: 16)),
-            ),
-          ),
-        ),
+      body: ListView.separated(
+        padding: const EdgeInsets.all(16),
+        itemCount: selectedTexts.length,
+        separatorBuilder: (_, __) => const SizedBox(height: 12),
+        itemBuilder: (context, index) => _buildTextCard(selectedTexts[index]),
       ),
     );
   }
+
+  Widget _buildTextCard(String text) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Text(text, style: const TextStyle(fontSize: 16)),
+      ),
+    );
+  }
+}
+
+@immutable
+class DisplayMetrics {
+  final double scaleX;
+  final double scaleY;
+  final double offsetX;
+  final double offsetY;
+
+  const DisplayMetrics({
+    required this.scaleX,
+    required this.scaleY,
+    required this.offsetX,
+    required this.offsetY,
+  });
 }
