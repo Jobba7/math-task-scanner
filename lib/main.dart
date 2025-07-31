@@ -4,7 +4,6 @@ import 'package:image_picker/image_picker.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:provider/provider.dart';
 import 'dart:ui' as ui;
-import 'dart:developer' as developer;
 
 void main() => runApp(const OcrSelectionApp());
 
@@ -14,7 +13,7 @@ class OcrSelectionApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'OCR Auswahl Demo',
+      title: 'Mathe Aufgaben OCR',
       theme: ThemeData(primarySwatch: Colors.blue),
       home: const CameraScreen(),
       debugShowCheckedModeBanner: false,
@@ -41,7 +40,7 @@ class CameraScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Bild aufnehmen')),
+      appBar: AppBar(title: const Text('Mathe Aufgabe fotografieren')),
       body: Center(
         child: ElevatedButton.icon(
           icon: const Icon(Icons.camera_alt),
@@ -56,7 +55,7 @@ class CameraScreen extends StatelessWidget {
 class TextRecognitionProvider extends ChangeNotifier {
   final File imageFile;
   final TextRecognizer _textRecognizer;
-  List<TextLine> textElements = [];
+  List<MathTask> mathTasks = [];
   final Set<int> selectedIndices = {};
   ui.Image? loadedImage;
 
@@ -82,56 +81,13 @@ class TextRecognitionProvider extends ChangeNotifier {
     final inputImage = InputImage.fromFile(imageFile);
     final recognizedText = await _textRecognizer.processImage(inputImage);
     
-    final blocks = recognizedText.blocks;
-    _logDetectedBlocks(blocks.where((block) => block.lines.length > 1).toList());
-    textElements = blocks
+    mathTasks = recognizedText.blocks
         .expand((block) => block.lines)
+        .map((line) => MathTask.fromTextLine(line))
+        .where((task) => task.isValidMathExpression)
         .toList();
 
     notifyListeners();
-  }
-
-  void _logDetectedBlocks(List<TextBlock> blocks) {
-    developer.log(
-      '▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄',
-      name: 'OCR_DEBUG',
-    );
-
-    for (final block in blocks) {
-      developer.log(
-        '▌ Block erkannt:',
-        name: 'OCR_DEBUG',
-      );
-      developer.log("$block",
-        name: 'OCR_DEBUG',
-      );
-      developer.log(
-        '▌   Text: "${block.text}"',
-        name: 'OCR_DEBUG',
-      );
-      for (final line in block.lines) {
-        developer.log(
-          '▌   Line: "${line.text}"',
-          name: 'OCR_DEBUG',
-        );
-        developer.log(
-          '▌   Confidence: ${line.confidence?.toStringAsFixed(2)}',
-          name: 'OCR_DEBUG',
-        );
-        developer.log("Bounding Box: ${line.boundingBox}",
-          name: 'OCR_DEBUG',
-        );
-      }
-      
-      developer.log(
-        '▌   Bounding Box: ${block.boundingBox}',
-        name: 'OCR_DEBUG',
-      );
-      developer.log(
-        '▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌',
-        name: 'OCR_DEBUG',
-      );
-    }
   }
 
   void toggleSelection(int index) {
@@ -143,14 +99,53 @@ class TextRecognitionProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  List<String> getSelectedTexts() {
-    return selectedIndices.map((index) => textElements[index].text).toList();
+  List<String> getSelectedMathExpressions() {
+    return selectedIndices
+        .map((index) => mathTasks[index].formattedExpression)
+        .toList();
   }
 
   @override
   void dispose() {
     _textRecognizer.close();
     super.dispose();
+  }
+}
+
+class MathTask {
+  final TextLine textLine;
+  final String formattedExpression;
+  final bool isValidMathExpression;
+
+  MathTask({
+    required this.textLine,
+    required this.formattedExpression,
+    required this.isValidMathExpression,
+  });
+
+  factory MathTask.fromTextLine(TextLine line) {
+    final (formatted, isValid) = _parseMathExpression(line.text);
+    return MathTask(
+      textLine: line,
+      formattedExpression: formatted,
+      isValidMathExpression: isValid,
+    );
+  }
+
+  static (String, bool) _parseMathExpression(String input) {
+    // Entferne alle Leerzeichen
+    String cleaned = input.replaceAll(RegExp(r'\s+'), '');
+    
+    // Entferne alles ab dem Gleichheitszeichen (inklusive)
+    final equalIndex = cleaned.indexOf('=');
+    if (equalIndex != -1) {
+      cleaned = cleaned.substring(0, equalIndex);
+    }
+    
+    // Prüfe auf gültiges Mathe-Aufgabenformat
+    final isValid = RegExp(r'^\d+[+\-*/]\d+$').hasMatch(cleaned);
+    
+    return (cleaned, isValid);
   }
 }
 
@@ -174,7 +169,7 @@ class _TextRecognitionView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Text auswählen')),
+      appBar: AppBar(title: const Text('Mathe Aufgabe auswählen')),
       body: const _ImageOverlayWithText(),
       bottomNavigationBar: const _ConfirmationButton(),
     );
@@ -205,7 +200,7 @@ class _ImageOverlayWithText extends StatelessWidget {
             Positioned.fill(
               child: Image.file(provider.imageFile, fit: BoxFit.contain),
             ),
-            ..._buildTextElementsOverlay(
+            ..._buildMathTaskOverlays(
               provider: provider,
               displayMetrics: displayMetrics,
             ),
@@ -248,14 +243,14 @@ class _ImageOverlayWithText extends StatelessWidget {
     );
   }
 
-  List<Widget> _buildTextElementsOverlay({
+  List<Widget> _buildMathTaskOverlays({
     required TextRecognitionProvider provider,
     required DisplayMetrics displayMetrics,
   }) {
-    return provider.textElements.asMap().entries.map((entry) {
+    return provider.mathTasks.asMap().entries.map((entry) {
       final index = entry.key;
-      final element = entry.value;
-      final rect = element.boundingBox;
+      final mathTask = entry.value;
+      final rect = mathTask.textLine.boundingBox;
 
       return Positioned(
         left: rect.left * displayMetrics.scaleX + displayMetrics.offsetX,
@@ -269,7 +264,7 @@ class _ImageOverlayWithText extends StatelessWidget {
               border: Border.all(
                 color: provider.selectedIndices.contains(index)
                     ? Colors.green
-                    : Colors.red,
+                    : Colors.blue,
                 width: 2,
               ),
             ),
@@ -306,35 +301,57 @@ class _ConfirmationButton extends StatelessWidget {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => SummaryScreen(selectedTexts: provider.getSelectedTexts()),
+        builder: (_) => SummaryScreen(
+          selectedExpressions: provider.getSelectedMathExpressions(),
+        ),
       ),
     );
   }
 }
 
 class SummaryScreen extends StatelessWidget {
-  final List<String> selectedTexts;
+  final List<String> selectedExpressions;
 
-  const SummaryScreen({super.key, required this.selectedTexts});
+  const SummaryScreen({super.key, required this.selectedExpressions});
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Übersicht')),
+      appBar: AppBar(title: const Text('Mathe Aufgaben')),
       body: ListView.separated(
         padding: const EdgeInsets.all(16),
-        itemCount: selectedTexts.length,
-        separatorBuilder: (_, __) => const SizedBox(height: 12),
-        itemBuilder: (context, index) => _buildTextCard(selectedTexts[index]),
+        itemCount: selectedExpressions.length,
+        separatorBuilder: (_, __) => const SizedBox(height: 16),
+        itemBuilder: (context, index) => _buildMathTaskCard(
+          expression: selectedExpressions[index],
+          index: index + 1,
+        ),
       ),
     );
   }
 
-  Widget _buildTextCard(String text) {
+  Widget _buildMathTaskCard({required String expression, required int index}) {
     return Card(
+      elevation: 4,
       child: Padding(
         padding: const EdgeInsets.all(16),
-        child: Text(text, style: const TextStyle(fontSize: 16)),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Aufgabe $index:',
+              style: const TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 16,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              expression,
+              style: const TextStyle(fontSize: 24, fontFamily: 'Monospace'),
+            ),
+          ],
+        ),
       ),
     );
   }
