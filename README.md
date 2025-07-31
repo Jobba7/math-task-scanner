@@ -113,8 +113,8 @@ Die App ist derzeit als Prototyp implementiert und noch nicht im AppStore/PlaySt
 
 | Kameraaufnahme | Aufgabenauswahl | Zusammenfassung |
 |----------------|-----------------|-----------------|
-| ![Kamera](resources\images\screenshots\02_camera.jpg) | ![Auswahl](resources\images\screenshots\05_selection.jpg) | ![Zusammenfassung](resources\images\screenshots\06_summary.jpg) |
+| ![Kamera](resources/images/screenshots/02_camera.jpg) | ![Auswahl](resources/images/screenshots/05_selection.jpg) | ![Zusammenfassung](resources/images/screenshots/06_summary.jpg) |
 
-![Ablaufdiagram](resources\images\flow_chart.png)
+![Ablaufdiagram](resources/images/flow_chart.png)
 
 **Abbildung 1:** Workflow der Anwendung
